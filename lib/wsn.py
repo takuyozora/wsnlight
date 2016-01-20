@@ -10,6 +10,7 @@ import mtools
 
 from settings import settings
 import logger
+
 log = logger.init_log("wsn")
 
 
@@ -34,7 +35,7 @@ class Xbee(object):
             ATID = str(settings.get("xbee", "ATID"))
         if ATMY is None:
             ATMY = str(settings.get("xbee", "ATMY"))
-        self._serial = serial.Serial(serial_path, settings.get("xbee", "baudrates")[int(ATBD)])
+        self._serial = serial.Serial(serial_path, settings.get("xbee", "baudrates")[int(ATBD)], timeout=1)
         self._conf = {
             "ATMY": ATMY,
             "ATID": ATID,
@@ -62,9 +63,9 @@ class Xbee(object):
         :return:
         """
         if cmd != "+++" and not self._conf_mode:
-                log.debug("need to be in conf mode, goto")
-                while not self._conf_send("+++"):
-                    time.sleep(1.1)
+            log.debug("need to be in conf mode, goto")
+            while not self._conf_send("+++"):
+                time.sleep(1.1)
         elif cmd == "CN\r":
             self._conf_mode = False
         with self._lock_serial:
@@ -75,7 +76,9 @@ class Xbee(object):
             if check is False:
                 return True
             while b != '\r' and b != '\n':
-                b = self._serial.read(1)
+                b = ""
+                while len(b) == 0:  # Ignore timeout
+                    b = self._serial.read(1)
                 r = r + b
             if r[-3:] != "OK\r":
                 log.warning("!!! XBEE NOT OK !!! : {0}".format(str(r)))
@@ -96,12 +99,12 @@ class Xbee(object):
         :return:
         """
         succes = True
-        for key,value in self._conf.items():
-            if not self._conf_send(key+str(value)+"\r"):
+        for key, value in self._conf.items():
+            if not self._conf_send(key + str(value) + "\r"):
                 succes = False
                 break
         if succes:
-            if self._conf_send("CN"+"\r", check=False):
+            if self._conf_send("CN" + "\r", check=False):
                 log.info("XBEE: INIT OK")
                 self._have_been_init = True
                 return True
@@ -111,20 +114,22 @@ class Xbee(object):
     def get_frame(self):
         """
         This method wait a frame and return it
-        :return:
+        :return: False if timeout reached
         """
         with self._lock_serial:
             inframe = False
             frame = ""
             while True:
                 r = self._serial.read(1)
+                if len(r) == 0:  # Timeout occured
+                    return False
                 log.raw("inframe : read {0}".format(r))
                 if inframe:
                     if r == "/":
                         print("Frame conflict")
                         inframe = False
                     elif r == "\\":
-                        return SensorFrame(frame)    # print("Frame : {0}".format(frame))
+                        return SensorFrame(frame)  # print("Frame : {0}".format(frame))
                         # inframe = False
                     else:
                         frame += r
@@ -150,8 +155,16 @@ class SensorManager(object):
         self.dmx_output = dmx_output
         i = 0
         for addr in sensor_addr:
-            self.sensors[int(addr)] = SensorValues(10, i)
+            self.sensors[int(addr)] = SensorValues(i)
             i += 1
+
+    def compute_all(self):
+        """
+        Compute all sensors
+        :return:
+        """
+        for addr, sensor in self.sensors.items():
+            self.dmx_output[sensor.addr] = sensor.compute()
 
     def recv_frame(self, frame):
         """
@@ -161,12 +174,11 @@ class SensorManager(object):
         if int(frame.src) not in self.sensors.keys():
             log.warning("Ignore frame {0} because addr not configure {1}".format(frame, self.sensors.keys()))
             return False
-        log.debug("Add {0} in {1}".format(frame.val, frame.src))
-        sens =self.sensors[int(frame.src)]
-        #self.sensors[int(frame.src)].put_data(int(frame.val))
+        log.raw("Add {0} in {1}".format(frame.val, frame.src))
+        sens = self.sensors[int(frame.src)]
+        # self.sensors[int(frame.src)].put_data(int(frame.val))
         sens.put_data(int(frame.val))
-        self.dmx_output[sens.addr] = sens.compute()
-
+        # self.dmx_output[sens.addr] = sens.compute()
 
 
 class SensorThread(threading.Thread):
@@ -174,27 +186,60 @@ class SensorThread(threading.Thread):
     Class which recv sensorframes and keep a value table up to date
     """
 
-    def __init__(self, n_sensor):
+    def __init__(self, xbee, dmxout):
         """
         :param n_sensor: number of sensor
         :return:
         """
+        threading.Thread.__init__(self)
+        self._must_stop = threading.Event()
+        self._must_stop.clear()
+        self.xbee = xbee
+        self.sensors = SensorManager(tuple(settings.get("sensor", "addr")), dmxout)
+        self._config_addr = str(settings.get("reconfig_addr"))
+
+    def run(self):
+        """
+        Main loop of thread
+        :return:
+        """
+        while self._must_stop.isSet() is not True:
+            frame = self.xbee.get_frame()
+            log.raw("get {0}".format(frame))
+            if frame is False:
+                continue
+            elif str(frame.src) == self._config_addr:
+                log.debug("Reconfig {0}".format(frame.val))
+            else:
+                self.sensors.recv_frame(frame)
+        self.xbee.close()
+
+    def close(self):
+        """
+        Ask thread to stop
+        :return:
+        """
+        self._must_stop.set()
+
 
 class SensorValues(object):
     """
     Class which transform raw data to DMX value
     """
 
-    def __init__(self, depth, addr):
+    def __init__(self, addr):
         """
-        :param depth: Depth of data to store
         :param addr: dmx_addr
         :return:
         """
-        self._buffer = mtools.CircularBuffer(depth)
+        self._sum_depth = float(settings.get("sensor", "depth")) * int(settings.get("dmx", "fps"))
+        self._buffer = mtools.CircularBuffer(self._sum_depth)
         self.addr = addr
-        self._sum_depth = depth
-        self._factor = float(settings.get("dmx", "max_value"))/(depth * int(settings.get("sensor", "max_value")))
+        self._uptodate = 0
+        self._auto_fall_threshold = float(settings.get("dmx", "fps")) * float(settings.get("sensor", "auto_fall"))
+        self._cache = 0
+        self._factor = float(settings.get("dmx", "max_value")) / (
+                       self._sum_depth * int(settings.get("sensor", "max_value")))
 
     def put_data(self, data):
         """
@@ -202,14 +247,34 @@ class SensorValues(object):
         :param data:
         :return:
         """
+        self._uptodate = 0
         self._buffer.put(data)
+
+    def _compute(self):
+        """
+        :return:
+        """
+        return int(np.sum(self._buffer.data[:self._sum_depth]) * float(self._factor))
 
     def compute(self):
         """
         Compute current value
         :return:
         """
-        return int(np.sum(self._buffer.data[:self._sum_depth]) * float(self._factor))
+        if self._uptodate > 0:
+            if self._uptodate > self._auto_fall_threshold:
+                self._buffer.put(0)
+                self._cache = self._compute()
+            else:
+                log.raw("Use buffer {0}".format(self.addr))
+                self._uptodate += 1
+            return self._cache
+        else:
+            log.raw("Compte new value {0}".format(self.addr))
+            self._uptodate = 1
+            self._cache = self._compute()
+            return self._cache
+
 
 class SensorFrame(object):
     """
@@ -229,5 +294,3 @@ class SensorFrame(object):
 
     def __str__(self):
         return self.__repr__()
-
-

@@ -5,7 +5,7 @@ import threading
 import numpy as np
 import ola.ClientWrapper
 import math
-
+import time
 
 
 from settings import settings
@@ -36,6 +36,7 @@ class DmxManager(object):
         """
         :return:
         """
+        log.debug("Update DMX {0}".format(self.dmxout[:len(settings.get("sensor", "addr"))]))
         self.client.SendDmx(self.universe, self.dmxout)
 
     def close(self):
@@ -55,24 +56,50 @@ class DmxThread(threading.Thread):
         :return:
         """
         threading.Thread.__init__(self)
+        self._must_close = threading.Event()
+        self._must_close.clear()
         self.universe = universe
         self.wrapper = ola.ClientWrapper.ClientWrapper()
         self.client = self.wrapper.Client()
         self.client.SendDmx(self.universe, np.zeros(255, dtype=np.uint8))  # Clean all the universe
         self.dmxout = np.zeros(dmxoutput_size, dtype=np.uint8)
+        self.dt = 1/float(settings.get("dmx", "fps"))
+        self.compute_all = None
+        self.n_sensor = len(settings.get("sensor", "addr"))
 
-    def do_msg(self, msg):
+    def run(self):
         """
-        Compute all dmx
-        :param msg:
+        Main thread loop
         :return:
         """
-        #self.log.raw("tick dmx")
-        frame = self.get_current_frame()
-        for spot in self.lightfile.spots:
-            spot.update_dmx(frame, 1)
-        #self.log.raw("dmx out put {0}".format(self.dmxout))
-        self.client.SendDmx(self.universe, self.dmxout)
+        dt = 0
+        log.info("DMX ready")
+        while self._must_close.isSet() is not True:
+            if self.dt > dt:
+                time.sleep(self.dt - dt)
+                t = time.time()
+            else:
+                t = time.time() - dt
+            if self.compute_all is not None:
+                self.compute_all()
+                self.client.SendDmx(self.universe, self.dmxout)
+                log.debug("DMX : {0}".format(self.dmxout[:self.n_sensor]))
+            dt = time.time()-t
+        self._on_close()
+
+    def close(self):
+        """
+        :return:
+        """
+        self._must_close.set()
+
+    def set_compute_all(self, compute_all):
+        """
+        Set comput all function
+        :param compute_all: compute_all function
+        :return:
+        """
+        self.compute_all = compute_all
 
     def _on_close(self):
         self.client.SendDmx(self.universe, np.zeros(255, dtype=np.uint8))  # Clean all the universe
