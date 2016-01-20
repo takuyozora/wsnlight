@@ -27,7 +27,7 @@ class Xbee(object):
         :return:
         """
         self._lock_serial = threading.Lock()
-        self._serial = serial.Serial(serial_path, BAUDRATES[ATBD])
+        self._serial = serial.Serial(serial_path, BAUDRATES[int(ATBD)])
         self._conf = {
             "ATMY": ATMY,
             "ATID": ATID,
