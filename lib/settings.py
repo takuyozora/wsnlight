@@ -41,14 +41,15 @@ _DEFAULT_SETTING["xbee"]["ATMY"] = "3210"
 _DEFAULT_SETTING["reconfig_addr"] = "15"
 
 _DEFAULT_SETTING["sensor"] = dict()
-_DEFAULT_SETTING["sensor"]["depth"] = 3             # in sec
+_DEFAULT_SETTING["sensor"]["depth"] = 1             # in sec
 _DEFAULT_SETTING["sensor"]["addr"] = (19, 20)
 _DEFAULT_SETTING["sensor"]["max_value"] = 1024
+_DEFAULT_SETTING["sensor"]["min_value"] = 80
 _DEFAULT_SETTING["sensor"]["auto_fall"] = 0.5       # in sec
 
 _DEFAULT_SETTING["dmx"] = dict()
 _DEFAULT_SETTING["dmx"]["max_value"] = 255
-_DEFAULT_SETTING["dmx"]["fps"] = 30
+_DEFAULT_SETTING["dmx"]["fps"] = 25
 
 
 

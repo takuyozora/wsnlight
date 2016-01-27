@@ -73,12 +73,16 @@ class DmxThread(threading.Thread):
         :return:
         """
         dt = 0
+        drop = 0
         log.info("DMX ready")
         while self._must_close.isSet() is not True:
-            if self.dt > dt:
-                time.sleep(self.dt - dt)
+            if self.dt > dt + drop:
+                time.sleep(self.dt - dt + drop)
                 t = time.time()
+                drop = 0
             else:
+                log.warning("Drop frame")
+                drop = (- self.dt + dt)*2
                 t = time.time() - dt
             if self.compute_all is not None:
                 self.compute_all()

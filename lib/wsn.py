@@ -123,7 +123,7 @@ class Xbee(object):
                 r = self._serial.read(1)
                 if len(r) == 0:  # Timeout occured
                     return False
-                log.raw("inframe : read {0}".format(r))
+                #log.raw("inframe : read {0}".format(r))
                 if inframe:
                     if r == "/":
                         print("Frame conflict")
@@ -239,7 +239,10 @@ class SensorValues(object):
         self._auto_fall_threshold = float(settings.get("dmx", "fps")) * float(settings.get("sensor", "auto_fall"))
         self._cache = 0
         self._factor = float(settings.get("dmx", "max_value")) / (
-                       self._sum_depth * int(settings.get("sensor", "max_value")))
+                       self._sum_depth * ( int(settings.get("sensor", "max_value")) - int(settings.get("sensor", "min_value")) ))
+        self.min_val = int(settings.get("sensor", "min_value"))
+
+        log.debug("facotr {0}, min_val {1} !".format(self._factor, self.min_val))
 
     def put_data(self, data):
         """
@@ -248,13 +251,23 @@ class SensorValues(object):
         :return:
         """
         self._uptodate = 0
-        self._buffer.put(data)
+        d = data - self.min_val
+        if d < 0:
+            log.raw("Put 0 in buffer {0} (sat)".format(self.addr))
+            self._buffer.put(0)
+        else:
+            log.raw("Put {0} in buffer {1}".format(d, self.addr))
+            self._buffer.put(d)
 
     def _compute(self):
         """
         :return:
         """
-        return int(np.sum(self._buffer.data[:self._sum_depth]) * float(self._factor))
+        v = int((np.sum(self._buffer.data[:self._sum_depth])) * float(self._factor))
+        if v < 0:
+            return 0
+        else:
+            return v
 
     def compute(self):
         """
@@ -263,16 +276,16 @@ class SensorValues(object):
         """
         if self._uptodate > 0:
             if self._uptodate > self._auto_fall_threshold:
-                self._buffer.put(0)
+                self._buffer.put(int(self._cache/self._uptodate))
                 self._cache = self._compute()
             else:
-                log.raw("Use buffer {0}".format(self.addr))
-                self._uptodate += 1
+                log.raw("Use buffer {0}, {1}".format(self.addr,self._cache))
+            self._uptodate += 1
             return self._cache
         else:
-            log.raw("Compte new value {0}".format(self.addr))
             self._uptodate = 1
             self._cache = self._compute()
+            log.raw("Compte new value {0}, {1}".format(self.addr,self._cache))
             return self._cache
 
 
