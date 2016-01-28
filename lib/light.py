@@ -76,20 +76,19 @@ class DmxThread(threading.Thread):
         drop = 0
         log.info("DMX ready")
         while self._must_close.isSet() is not True:
-            if self.dt > dt + drop:
+            if self.dt > dt + drop:             # If we must wait before next frame
                 time.sleep(self.dt - dt + drop)
-                t = time.time()
                 drop = 0
-            else:
+            else:                               # If we are in late
                 log.warning("Drop frame")
-                drop = (- self.dt + dt)*2
-                t = time.time() - dt
-            if self.compute_all is not None:
-                self.compute_all()
-                self.client.SendDmx(self.universe, self.dmxout)
+                drop = (- self.dt + dt)*2       # Add a drop time to avoid sleep
+            t = time.time()
+            if self.compute_all is not None:    # Protection against uninitialized thread
+                self.compute_all()              # Compute all DMX chan
+                self.client.SendDmx(self.universe, self.dmxout)     # Send DMX numpy array to olad
                 log.debug("DMX : {0}".format(self.dmxout[:self.n_sensor]))
-            dt = time.time()-t
-        self._on_close()
+            dt = time.time()-t                  # Save compute time
+        self._on_close()                        # Close on exit
 
     def close(self):
         """

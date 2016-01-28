@@ -60,6 +60,7 @@ class Xbee(object):
         This methode send a command to the XBee and wait for a OK\r
         :param cmd: command to send
         :param check: True if wait a OK response
+        :param retry: True if auto retry to send the command if failled
         :return:
         """
         if cmd != "+++" and not self._conf_mode:
@@ -123,14 +124,12 @@ class Xbee(object):
                 r = self._serial.read(1)
                 if len(r) == 0:  # Timeout occured
                     return False
-                #log.raw("inframe : read {0}".format(r))
                 if inframe:
                     if r == "/":
-                        print("Frame conflict")
+                        log.warning("Frame conflict")
                         inframe = False
                     elif r == "\\":
-                        return SensorFrame(frame)  # print("Frame : {0}".format(frame))
-                        # inframe = False
+                        return SensorFrame(frame)
                     else:
                         frame += r
                 else:
@@ -261,7 +260,7 @@ class SensorValues(object):
 
     def _compute(self):
         """
-        :return:
+        :return: Value to send to the DMX channel
         """
         v = int((np.sum(self._buffer.data[:self._sum_depth])) * float(self._factor))
         if v < 0:
@@ -271,19 +270,19 @@ class SensorValues(object):
 
     def compute(self):
         """
-        Compute current value
+        Compute current value for the DMX channel
         :return:
         """
-        if self._uptodate > 0:
-            if self._uptodate > self._auto_fall_threshold:
-                self._buffer.put(int(self._cache/self._uptodate))
-                self._cache = self._compute()
+        if self._uptodate > 0:      # There is no new value in the buffer
+            if self._uptodate > self._auto_fall_threshold:          # It has been too long since the last value : start auto-fall
+                self._buffer.put(int(self._cache/self._uptodate))   # Add a lower value to the buffer
+                self._cache = self._compute()                       # Compute new value
             else:
                 log.raw("Use buffer {0}, {1}".format(self.addr,self._cache))
-            self._uptodate += 1
+            self._uptodate += 1     # Increment uptodate to know since when there haven't been a new value
             return self._cache
-        else:
-            self._uptodate = 1
+        else:                       # There at least a new value in the buffer
+            self._uptodate = 1      # Set uptodate to one to signify that the buffer and the cache are sync
             self._cache = self._compute()
             log.raw("Compte new value {0}, {1}".format(self.addr,self._cache))
             return self._cache
