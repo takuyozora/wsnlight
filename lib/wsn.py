@@ -299,7 +299,10 @@ class SensorFrame(object):
         :return:
         """
         self._raw = raw_frame
-        self.src, self.val = raw_frame.split(",")
+        try:
+            self.src, self.val = raw_frame.split(",")
+        except ValueError:
+            log.warning("Corrupted frame : skip")
 
     def __repr__(self):
         return "addr:{0}, val:{1}, raw:{2}".format(self.src, self.val, self._raw)
