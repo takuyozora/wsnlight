@@ -76,7 +76,7 @@ class DmxThread(threading.Thread):
         drop = 0
         log.info("DMX ready")
         while self._must_close.isSet() is not True:
-            if self.dt > dt + drop:             # If we must wait before next frame
+            if self.dt > (dt - drop):             # If we must wait before next frame
                 time.sleep(self.dt - dt + drop)
                 drop = 0
             else:                               # If we are in late
